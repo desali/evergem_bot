@@ -28,22 +28,23 @@ def work(line, proxy, s):
     idi, castl, cookie = line.strip().split(':')
     sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-    proxy_url = f"http://{proxy}"
-    proxies = {
-        "http": proxy_url,
-        "https": proxy_url
-    }
+    if proxy != 'no':
+        proxy_url = f"http://{proxy}"
+        proxies = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
 
-    response = requests.get("http://httpbin.org/ip", proxies=proxies, timeout=5)
-    if response.status_code == 200:
-        pass
-    else:
-        print(f"Прокси {proxy} не работает. Статус: {response.status_code}. Поток засыпает до конца работы")
-        time.sleep(99999999999)
+        response = requests.get("http://httpbin.org/ip", proxies=proxies, timeout=5)
+        if response.status_code == 200:
+            pass
+        else:
+            print(f"Прокси {proxy} не работает. Статус: {response.status_code}. Поток засыпает до конца работы")
+            time.sleep(99999999999)
 
     from twocaptcha import TwoCaptcha
 
-    api_key = os.getenv('APIKEY_2CAPTCHA', 'api')
+    api_key = os.getenv('APIKEY_2CAPTCHA', '5bcf672e872e4ed67e1b0a1627eece17')
 
     solver = TwoCaptcha(api_key)
 
@@ -95,7 +96,11 @@ def work(line, proxy, s):
             'User-Agent': f'{random_user_agent}'
         }
 
-        response = requests.post(url, headers=headers, params=params, data=payload, proxies=proxies)
+        if proxy != 'no':
+            response = requests.post(url, headers=headers, params=params, data=payload, proxies=proxies)
+        else:
+            response = requests.post(url, headers=headers, params=params, data=payload)
+
         pot = threading.current_thread().name
 
         if response.status_code == 200:
