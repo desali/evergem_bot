@@ -1,127 +1,131 @@
-import sys
-import os
+import asyncio
+import pytz
+import aiohttp
 import random
-import threading
-import time
 
-import requests
+from datetime import datetime
+from openpyxl import load_workbook
+from twocaptcha import TwoCaptcha
 
-with open('proxy.txt', 'r') as proxy_file:
-    proxies_list = proxy_file.readlines()
+number_of_accounts = 1
 
-user_agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-    "Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Gecko",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/603.3.8 (KHTML, like Gecko) Version/10.1.2 Safari/603.3.8",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:57.0) Gecko/20100101 Firefox/57.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0",
-    "Mozilla/5.0 (iPad; CPU OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:55.0) Gecko/20100101 Firefox/55.0"
-]
+almaty_tz = pytz.timezone('Asia/Almaty')
+
+workbook = load_workbook(filename='info.xlsx')
+sheet = workbook.active
+data = []
+
+min_row = 2
+max_row = min_row + number_of_accounts - 1
+for row in sheet.iter_rows(min_row=min_row, max_row=max_row, values_only=True):
+    data.append({
+        'name': row[0],
+        'proxy': row[1],
+        'ua': row[2],
+        'item_id': row[7],
+        'token': row[8],
+        'cookie': row[9],
+        'sleep_min': row[10],
+        'sleep_max': row[11]
+    })
 
 
-def work(line, proxy, s):
+async def work(account, session):
+    claim_count = 1
 
-    idi, castl, cookie = line.strip().split(':')
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    name = account['name']
+    proxy = account['proxy']
+    user_agent = account['ua']
+    item_id = account['item_id']
+    token = account['token']
+    cookie = account['cookie']
+    sleep_min = int(account['sleep_min'])
+    sleep_max = int(account['sleep_max'])
 
-    if proxy != 'no':
-        proxy_url = f"http://{proxy}"
-        proxies = {
-            "http": proxy_url,
-            "https": proxy_url
-        }
-
-        response = requests.get("http://httpbin.org/ip", proxies=proxies, timeout=5)
-        if response.status_code == 200:
-            pass
+    while True:
+        try:
+            request_kwargs = {"timeout": 10}
+            if proxy.lower() != 'no':
+                proxy_creds = proxy.split(':')
+                request_kwargs["proxy"] = f"http://{proxy_creds[2]}:{proxy_creds[3]}@{proxy_creds[0]}:{proxy_creds[1]}"
+            async with session.get("http://httpbin.org/ip", **request_kwargs) as response:
+                response.raise_for_status()
+        except Exception as e:
+            current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{current_time}: {name}: {proxy}: Ошибка в проверке прокси: {e}")
         else:
-            print(f"Прокси {proxy} не работает. Статус: {response.status_code}. Поток засыпает до конца работы")
-            time.sleep(99999999999)
+            try:
+                solver = TwoCaptcha("5bcf672e872e4ed67e1b0a1627eece17")
 
-    from twocaptcha import TwoCaptcha
+                result = solver.hcaptcha(
+                    sitekey='d1add268-b915-46c1-afd3-960faba20822',
+                    url='https://evergem.io/claim?redirect_to=/game',
+                )
+                gh = result.get('code')
+                gh = gh.replace(" ", "")
+            except Exception as e:
+                current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"{current_time}: {name}: Ошибка в решении капчи: {e}")
+            else:
+                try:
+                    url = 'https://evergem.io/claim'
+                    params = {
+                        'redirect_to': '/game'
+                    }
+                    payload = {
+                        'item_id': f'{item_id}',
+                        'h-captcha-response': gh,
+                        'castle_request_token': token
+                    }
+                    headers = {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Accept-Language': 'uk,ru-RU;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6,bg;q=0.5,es;q=0.4',
+                        'Cache-Control': 'max-age=0',
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Cookie': f'{cookie}',
+                        'Origin': 'null',
+                        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Windows"',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'same-origin',
+                        'Sec-Fetch-User': '?1',
+                        'Upgrade-Insecure-Requests': '1',
+                        'User-Agent': f'{user_agent}'
+                    }
 
-    api_key = os.getenv('APIKEY_2CAPTCHA', '5bcf672e872e4ed67e1b0a1627eece17')
+                    request_kwargs = {}
+                    if proxy.lower() != 'no':
+                        proxy_creds = proxy.split(':')
+                        request_kwargs["proxy"] = f"http://{proxy_creds[2]}:{proxy_creds[3]}@{proxy_creds[0]}:{proxy_creds[1]}"
+                    async with session.post(url,
+                                            headers=headers,
+                                            params=params,
+                                            data=payload,
+                                            **request_kwargs) as response:
+                        response.raise_for_status()
+                except Exception as e:
+                    current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"{current_time}: {name}: Ошибка во время клейма: {e}")
+                else:
+                    current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"{current_time}: {name}: Удачный клейм: {claim_count}")
+                    claim_count += 1
 
-    solver = TwoCaptcha(api_key)
+        await asyncio.sleep(random.randint(sleep_min, sleep_max))
 
-    try:
-        result = solver.hcaptcha(
-            sitekey='d1add268-b915-46c1-afd3-960faba20822',
-            url='https://evergem.io/claim?redirect_to=/game',
-        )
 
-    except Exception as e:
-        sys.exit(e)
+async def main():
+    async with aiohttp.ClientSession() as session:
+        tasks = []
 
-    else:
-        gh = result.get('code')
-        gh = gh.replace(" ", "")
-        # print(gh)
-        random_user_agent = random.choice(user_agents)
+        for account in data:
+            task = asyncio.create_task(work(account, session))
+            tasks.append(task)
 
-        params = {
-            'redirect_to': '/game'
-        }
+        await asyncio.gather(*tasks)
 
-        url = 'https://evergem.io/claim?redirect_to=/game'
-        payload = {
-            # 'g-recaptcha-response': gh,
-            'item_id': f'{idi}',
-            'h-captcha-response': gh,
-            'castle_request_token': castl
-            # 'requestId': f'{request1}',
 
-        }
-
-        headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'uk,ru-RU;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6,bg;q=0.5,es;q=0.4',
-            'Cache-Control': 'max-age=0',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Cookie': f'{cookie}',
-            'Origin': 'null',
-            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': f'{random_user_agent}'
-        }
-
-        if proxy != 'no':
-            response = requests.post(url, headers=headers, params=params, data=payload, proxies=proxies)
-        else:
-            response = requests.post(url, headers=headers, params=params, data=payload)
-
-        pot = threading.current_thread().name
-
-        if response.status_code == 200:
-            print(f"Поток: {pot}: Заклеймлино наград: {s}  | Автор Rudy Crypto - https://t.me/rudtyt")
-        else:
-            print("Хуй знает, но почему-то не заклеймилось")
-
-        time.sleep(300)
-
-s = 1
-while True:
-
-    threads = []
-    with open('info.txt', 'r') as file:
-        for idx, line in enumerate(file):
-            proxy = proxies_list[idx % len(proxies_list)].strip()
-            thread = threading.Thread(target=work, args=(line, proxy, s))
-            threads.append(thread)
-            thread.start()
-
-    for thread in threads:
-        thread.join()
-        s = s + 1
-
+asyncio.run(main())
