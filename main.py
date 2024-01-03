@@ -2,12 +2,14 @@ import asyncio
 import pytz
 import aiohttp
 import random
+import concurrent.futures
+
 
 from datetime import datetime
 from openpyxl import load_workbook
 from twocaptcha import TwoCaptcha
 
-number_of_accounts = 1
+number_of_accounts = 2
 
 almaty_tz = pytz.timezone('Asia/Almaty')
 
@@ -30,44 +32,49 @@ for row in sheet.iter_rows(min_row=min_row, max_row=max_row, values_only=True):
     })
 
 
-async def work(account, session):
-    claim_count = 1
+async def captchaSolver():
+    loop = asyncio.get_running_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, lambda: TwoCaptcha("5bcf672e872e4ed67e1b0a1627eece17").hcaptcha(
+            sitekey='d1add268-b915-46c1-afd3-960faba20822',
+            url='https://evergem.io/claim?redirect_to=/game',
+        ))
+        return result
 
-    name = account['name']
-    proxy = account['proxy']
-    user_agent = account['ua']
-    item_id = account['item_id']
-    token = account['token']
-    cookie = account['cookie']
-    sleep_min = int(account['sleep_min'])
-    sleep_max = int(account['sleep_max'])
 
-    while True:
-        try:
-            request_kwargs = {"timeout": 10}
-            if proxy.lower() != 'no':
-                proxy_creds = proxy.split(':')
-                request_kwargs["proxy"] = f"http://{proxy_creds[2]}:{proxy_creds[3]}@{proxy_creds[0]}:{proxy_creds[1]}"
-            async with session.get("http://httpbin.org/ip", **request_kwargs) as response:
-                response.raise_for_status()
-        except Exception as e:
-            current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
-            print(f"{current_time}: {name}: {proxy}: Ошибка в проверке прокси: {e}")
-        else:
+async def work(account):
+    async with aiohttp.ClientSession() as session:
+
+        claim_count = 1
+
+        name = account['name']
+        proxy = account['proxy']
+        user_agent = account['ua']
+        item_id = account['item_id']
+        token = account['token']
+        cookie = account['cookie']
+        sleep_min = int(account['sleep_min'])
+        sleep_max = int(account['sleep_max'])
+        # print(f"{name} данные загружены")
+
+        while True:
             try:
-                solver = TwoCaptcha("5bcf672e872e4ed67e1b0a1627eece17")
+                # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                # print(f"{current_time}: {name} начинаю решать капчу")
+                result = await captchaSolver()
 
-                result = solver.hcaptcha(
-                    sitekey='d1add268-b915-46c1-afd3-960faba20822',
-                    url='https://evergem.io/claim?redirect_to=/game',
-                )
                 gh = result.get('code')
                 gh = gh.replace(" ", "")
+                current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                # print(f"{current_time}: {name} решил капчу")
+                # print(gh)
             except Exception as e:
                 current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 print(f"{current_time}: {name}: Ошибка в решении капчи: {e}")
             else:
                 try:
+                    # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                    # print(f"{current_time}: {name} начинаю клейм")
                     url = 'https://evergem.io/claim'
                     params = {
                         'redirect_to': '/game'
@@ -96,36 +103,52 @@ async def work(account, session):
                         'User-Agent': f'{user_agent}'
                     }
 
-                    request_kwargs = {}
+                    proxy_url = None
                     if proxy.lower() != 'no':
                         proxy_creds = proxy.split(':')
-                        request_kwargs["proxy"] = f"http://{proxy_creds[2]}:{proxy_creds[3]}@{proxy_creds[0]}:{proxy_creds[1]}"
-                    async with session.post(url,
-                                            headers=headers,
-                                            params=params,
-                                            data=payload,
-                                            **request_kwargs) as response:
-                        response.raise_for_status()
+                        proxy_url = f"http://{proxy_creds[2]}:{proxy_creds[3]}@{proxy_creds[0]}:{proxy_creds[1]}"
+                    # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                    # print(f"{current_time}: {name} перед запросом")
+                    if proxy_url:
+                        async with session.post(url,
+                                                headers=headers,
+                                                params=params,
+                                                data=payload,
+                                                proxy=proxy_url) as response:
+                            # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                            # print(f"{current_time}: {name} внутри запроса с прокси")
+                            response.raise_for_status()
+                    else:
+                        async with session.post(url,
+                                                headers=headers,
+                                                params=params,
+                                                data=payload) as response:
+                            # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                            # print(f"{current_time}: {name} внутри запроса без прокси")
+                            response.raise_for_status()
                 except Exception as e:
                     current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                     print(f"{current_time}: {name}: Ошибка во время клейма: {e}")
                 else:
+                    # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                    # print(f"{current_time}: {name} после запроса")
                     current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                     print(f"{current_time}: {name}: Удачный клейм: {claim_count}")
                     claim_count += 1
 
-        await asyncio.sleep(random.randint(sleep_min, sleep_max))
+            # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+            # print(f"{current_time}: {name} засыпает")
+            await asyncio.sleep(random.randint(sleep_min, sleep_max))
 
 
 async def main():
-    async with aiohttp.ClientSession() as session:
-        tasks = []
+    tasks = []
 
-        for account in data:
-            task = asyncio.create_task(work(account, session))
-            tasks.append(task)
+    for account in data:
+        task = asyncio.create_task(work(account))
+        tasks.append(task)
 
-        await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks)
 
 
 asyncio.run(main())
