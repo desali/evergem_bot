@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 # CHANGE CHANGE CHANGE
 number_of_accounts = 98
 USER_ID = "5169447902"
+REHALKA_API_KEY = "74195bcd-0a3a-4b13-8711-06c6309e6840"
 # CHANGE CHANGE CHANGE
 
 almaty_tz = pytz.timezone('Asia/Almaty')
@@ -23,7 +24,6 @@ TWOCAPTHCA = "twocaptcha"
 REHALKA = "rehalka"
 
 REHALKA_IP = "188.124.36.201:3005"
-REHALKA_API_KEY = "74195bcd-0a3a-4b13-8711-06c6309e6840"
 CAPTCHA_URL = "https://evergem.io/claim?redirect_to=/game"
 CAPTCHA_KEY = "d1add268-b915-46c1-afd3-960faba20822"
 
