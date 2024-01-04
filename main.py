@@ -1,8 +1,11 @@
 import asyncio
+import os
+
 import pytz
 import aiohttp
 import random
 import concurrent.futures
+from dotenv import load_dotenv
 
 
 from datetime import datetime
@@ -11,14 +14,12 @@ from twocaptcha import TwoCaptcha
 
 from bs4 import BeautifulSoup
 
-# CHANGE CHANGE CHANGE
-number_of_accounts = 98
-USER_ID = "5169447902"
-REHALKA_API_KEY = "74195bcd-0a3a-4b13-8711-06c6309e6840"
-# CHANGE CHANGE CHANGE
+# Load env variables
+load_dotenv()
+number_of_accounts = int(os.getenv('ACCOUNTS_COUNT'))
+USER_ID = os.getenv('USER_ID')
 
 almaty_tz = pytz.timezone('Asia/Almaty')
-
 
 TWOCAPTHCA = "twocaptcha"
 REHALKA = "rehalka"
@@ -43,8 +44,7 @@ for row in sheet.iter_rows(min_row=min_row, max_row=max_row, values_only=True):
         'item_id': row[7],
         'token': row[8],
         'cookie': row[9],
-        'sleep_min': row[10],
-        'sleep_max': row[11]
+        'rehalka_key': row[10]
     })
 
 
@@ -56,7 +56,7 @@ async def send_telegram_message(bot_token, chat_id, text):
             response.raise_for_status()
 
 
-async def captchaSolver(method):
+async def captchaSolver(method, key):
     if method == TWOCAPTHCA:
         loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -68,7 +68,7 @@ async def captchaSolver(method):
             return two_result.get('code').replace(" ", "")
     elif method == REHALKA:
         async with aiohttp.ClientSession() as rh_session:
-            url = f"http://{REHALKA_IP}/in.php?userkey={REHALKA_API_KEY}&host={CAPTCHA_URL}&sitekey={CAPTCHA_KEY}"
+            url = f"http://{REHALKA_IP}/in.php?userkey={key}&host={CAPTCHA_URL}&sitekey={CAPTCHA_KEY}"
             captcha_id = None
             while captcha_id is None:
                 await asyncio.sleep(1)
@@ -88,7 +88,7 @@ async def captchaSolver(method):
                 await asyncio.sleep(5)
 
                 async with aiohttp.ClientSession() as rh_res_session:
-                    url = f"http://{REHALKA_IP}/res.php?userkey={REHALKA_API_KEY}&id={captcha_id}"
+                    url = f"http://{REHALKA_IP}/res.php?userkey={key}&id={captcha_id}"
                     async with rh_res_session.get(url) as res_response:
                         res_response.raise_for_status()
                         response_text = await res_response.text()
@@ -120,15 +120,15 @@ async def work(account):
         item_id = account['item_id']
         token = account['token']
         cookie = account['cookie']
-        sleep_min = int(account['sleep_min'])
-        sleep_max = int(account['sleep_max'])
+        key = account['rehalka_key']
         # print(f"{name} данные загружены")
 
         while True:
+            start_cycle_dt = datetime.now(almaty_tz)
             try:
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} начинаю решать капчу")
-                gh = await captchaSolver(REHALKA)
+                gh = await captchaSolver(REHALKA, key)
 
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} решил капчу")
@@ -299,7 +299,10 @@ async def work(account):
 
             # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
             # print(f"{current_time}: {name} засыпает")
-            await asyncio.sleep(random.randint(sleep_min, sleep_max))
+            end_cycle_dt = datetime.now(almaty_tz)
+            cycle_seconds = (end_cycle_dt - start_cycle_dt).total_seconds()
+            if cycle_seconds < 300:
+                await asyncio.sleep(300 - int(cycle_seconds))
 
 
 async def main():
