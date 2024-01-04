@@ -80,8 +80,8 @@ async def captchaSolver(method, rehalka_key):
         loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             two_result = await loop.run_in_executor(pool, lambda: TwoCaptcha(TWOCAPTCHA_KEY, defaultTimeout=180).hcaptcha(
-                sitekey=CAPTCHA_URL,
-                url=CAPTCHA_KEY,
+                sitekey=CAPTCHA_KEY,
+                url=CAPTCHA_URL,
             ))
             return two_result.get('code').replace(" ", "")
     elif method == CAPMONSTER:
