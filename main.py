@@ -8,9 +8,10 @@ import concurrent.futures
 from capmonstercloudclient.requests import HcaptchaProxylessRequest
 from dotenv import load_dotenv
 
-
 from datetime import datetime
 from openpyxl import load_workbook
+from python3_capsolver.core.enum import HCaptchaTypeEnm
+from python3_capsolver.hcaptcha import HCaptcha
 from twocaptcha import TwoCaptcha
 
 from bs4 import BeautifulSoup
@@ -21,17 +22,27 @@ from capmonstercloudclient import CapMonsterClient, ClientOptions
 load_dotenv()
 number_of_accounts = int(os.getenv('ACCOUNTS_COUNT'))
 USER_ID = os.getenv('USER_ID')
+TWOCAPTCHA_KEY = os.getenv('TWOCAPTCHA_KEY')
 CAPMONSTER_KEY = os.getenv('CAPMONSTER_KEY')
+CAPSOLVER_KEY = os.getenv('CAPSOLVER_KEY')
+CAPTCHA_SERVICE = os.getenv('CAPTCHA_SERVICE')
 
 almaty_tz = pytz.timezone('Asia/Almaty')
 
 TWOCAPTHCA = "twocaptcha"
 REHALKA = "rehalka"
 CAPMONSTER = "capmonster"
+CAPSOLVER = "capsolver"
 
-REHALKA_IP = "188.124.36.201:3005"
+if CAPTCHA_SERVICE not in [TWOCAPTHCA, REHALKA, CAPMONSTER, CAPSOLVER]:
+    raise ValueError("CAPTCHA_SERVICE not in list!")
+
+
 CAPTCHA_URL = "https://evergem.io/claim?redirect_to=/game"
 CAPTCHA_KEY = "d1add268-b915-46c1-afd3-960faba20822"
+
+REHALKA_IP = "188.124.36.201:3005"
+CAPSOLVER_API = "https://api.capsolver.com"
 
 TELEGRAM_BOT_TOKEN = "6933846503:AAEL6QXu_4a9yEyiX-yZua2MyeEMyHAn0IA"
 
@@ -68,8 +79,7 @@ async def captchaSolver(method, rehalka_key):
     if method == TWOCAPTHCA:
         loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
-            two_result = await loop.run_in_executor(pool, lambda: TwoCaptcha("5bcf672e872e4ed67e1b0a1627eece17",
-                                                                         defaultTimeout=180).hcaptcha(
+            two_result = await loop.run_in_executor(pool, lambda: TwoCaptcha(TWOCAPTCHA_KEY, defaultTimeout=180).hcaptcha(
                 sitekey=CAPTCHA_URL,
                 url=CAPTCHA_KEY,
             ))
@@ -80,6 +90,16 @@ async def captchaSolver(method, rehalka_key):
             websiteKey=CAPTCHA_KEY)
         cap_result = await cap_monster_client.solve_captcha(recaptcha2request)
         return cap_result['gRecaptchaResponse']
+    elif method == CAPSOLVER:
+        capsolver_result = await HCaptcha(api_key=CAPSOLVER_KEY,
+                                          captcha_type=HCaptchaTypeEnm.HCaptchaTaskProxyless,
+                                          websiteURL=CAPTCHA_URL,
+                                          websiteKey=CAPTCHA_KEY,
+                                          ).aio_captcha_handler()
+        if capsolver_result.errorId != 0:
+            raise ValueError(f"Solving capsolver captcha error: {capsolver_result.errorDescription}")
+
+        return capsolver_result.solution.get('gRecaptchaResponse')
     elif method == REHALKA:
         async with aiohttp.ClientSession() as rh_session:
             url = f"http://{REHALKA_IP}/in.php?userkey={rehalka_key}&host={CAPTCHA_URL}&sitekey={CAPTCHA_KEY}"
@@ -91,7 +111,7 @@ async def captchaSolver(method, rehalka_key):
                     in_response.raise_for_status()
                     captcha_info = await in_response.text()
                 if captcha_info in ["ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE",
-                                     "ERROR_CAPTCHA_UNSOLVABLE", "ERROR_WRONG_SAITKEY", "ERROR_WRONG_CAPTCHA_ID"]:
+                                    "ERROR_CAPTCHA_UNSOLVABLE", "ERROR_WRONG_SAITKEY", "ERROR_WRONG_CAPTCHA_ID"]:
                     raise ValueError(f"Getting result: {captcha_info}")
                 elif captcha_info in ["ERROR_NO_SLOT_AVAILABLE", "CAPCHA_NOT_READY"]:
                     continue
@@ -108,7 +128,7 @@ async def captchaSolver(method, rehalka_key):
                         response_text = await res_response.text()
 
                     if response_text in ["ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE",
-                                  "ERROR_CAPTCHA_UNSOLVABLE", "ERROR_WRONG_SAITKEY", "ERROR_WRONG_CAPTCHA_ID"]:
+                                         "ERROR_CAPTCHA_UNSOLVABLE", "ERROR_WRONG_SAITKEY", "ERROR_WRONG_CAPTCHA_ID"]:
                         raise ValueError(f"Getting result: {response_text}")
                     elif response_text in ["ERROR_NO_SLOT_AVAILABLE", "CAPCHA_NOT_READY"]:
                         continue
@@ -142,7 +162,7 @@ async def work(account):
             try:
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} начинаю решать капчу")
-                gh = await captchaSolver(CAPMONSTER, "")
+                gh = await captchaSolver(method=CAPTCHA_SERVICE, rehalka_key=rehalka_key)
 
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} решил капчу")
@@ -228,17 +248,20 @@ async def work(account):
                     balance_usd = next((tag.text.strip() for tag in balance_info_p_tags if "$" in tag.text), None)
 
                     rate_wrap_container = top_wrap_container.find('div', class_='rate-wrap')
-                    rate_hpe_day = next((tag.text.strip() for tag in rate_wrap_container.find_all('span') if "HPE/day" in tag.text),None)
+                    rate_hpe_day = next(
+                        (tag.text.strip() for tag in rate_wrap_container.find_all('span') if "HPE/day" in tag.text),
+                        None)
 
                     current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"{current_time}: {name}: Удачный клейм: {claim_count}, Баланс: {balance_hpe} ({balance_usd}) | {rate_hpe_day}")
+                    print(
+                        f"{current_time}: {name}: Удачный клейм: {claim_count}, Баланс: {balance_hpe} ({balance_usd}) | {rate_hpe_day}")
                     claim_count += 1
 
                     balance_hpe_float = float(balance_hpe.split(' ')[0])
                     rate_hpe_float_day = float(rate_hpe_day.split(' ')[0])
 
                     current_time_raw = datetime.now(almaty_tz)
-                    if balance_hpe_float >= rate_hpe_float_day/4:
+                    if balance_hpe_float >= rate_hpe_float_day / 4:
                         try:
                             # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                             # print(f"{current_time}: {name}: Вывожу HPE: {balance_hpe_float}")
@@ -287,18 +310,18 @@ async def work(account):
                             async with aiohttp.ClientSession() as withdraw_session:
                                 if proxy_url:
                                     async with withdraw_session.post(url,
-                                                            headers=headers,
-                                                            params=params,
-                                                            data=payload,
-                                                            proxy=proxy_url) as response:
+                                                                     headers=headers,
+                                                                     params=params,
+                                                                     data=payload,
+                                                                     proxy=proxy_url) as response:
                                         # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                                         # print(f"{current_time}: {name} внутри запроса с прокси")
                                         response.raise_for_status()
                                 else:
                                     async with withdraw_session.post(url,
-                                                            headers=headers,
-                                                            params=params,
-                                                            data=payload) as response:
+                                                                     headers=headers,
+                                                                     params=params,
+                                                                     data=payload) as response:
                                         # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                                         # print(f"{current_time}: {name} внутри запроса без прокси")
                                         response.raise_for_status()
