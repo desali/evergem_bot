@@ -11,7 +11,10 @@ from twocaptcha import TwoCaptcha
 
 from bs4 import BeautifulSoup
 
+# CHANGE CHANGE CHANGE
 number_of_accounts = 98
+USER_ID = "5169447902"
+# CHANGE CHANGE CHANGE
 
 almaty_tz = pytz.timezone('Asia/Almaty')
 
@@ -24,6 +27,7 @@ REHALKA_API_KEY = "74195bcd-0a3a-4b13-8711-06c6309e6840"
 CAPTCHA_URL = "https://evergem.io/claim?redirect_to=/game"
 CAPTCHA_KEY = "d1add268-b915-46c1-afd3-960faba20822"
 
+TELEGRAM_BOT_TOKEN = "6933846503:AAEL6QXu_4a9yEyiX-yZua2MyeEMyHAn0IA"
 
 workbook = load_workbook(filename='info.xlsx')
 sheet = workbook.active
@@ -44,6 +48,14 @@ for row in sheet.iter_rows(min_row=min_row, max_row=max_row, values_only=True):
     })
 
 
+async def send_telegram_message(bot_token, chat_id, text):
+    url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+    params = {'chat_id': chat_id, 'text': text}
+    async with aiohttp.ClientSession() as tg_session:
+        async with tg_session.post(url, params=params) as response:
+            response.raise_for_status()
+
+
 async def captchaSolver(method):
     if method == TWOCAPTHCA:
         loop = asyncio.get_running_loop()
@@ -57,12 +69,20 @@ async def captchaSolver(method):
     elif method == REHALKA:
         async with aiohttp.ClientSession() as rh_session:
             url = f"http://{REHALKA_IP}/in.php?userkey={REHALKA_API_KEY}&host={CAPTCHA_URL}&sitekey={CAPTCHA_KEY}"
-            async with rh_session.get(url) as in_response:
-                in_response.raise_for_status()
-                captcha_info = await in_response.text()
-                if "OK" not in captcha_info:
-                    raise ValueError("Getting captcha value error")
-                captcha_id = captcha_info.split('|')[1]
+            captcha_id = None
+            while captcha_id is None:
+                await asyncio.sleep(1)
+
+                async with rh_session.get(url) as in_response:
+                    in_response.raise_for_status()
+                    captcha_info = await in_response.text()
+                if captcha_info in ["ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE",
+                                     "ERROR_CAPTCHA_UNSOLVABLE", "ERROR_WRONG_SAITKEY", "ERROR_WRONG_CAPTCHA_ID"]:
+                    raise ValueError(f"Getting result: {captcha_info}")
+                elif captcha_info in ["ERROR_NO_SLOT_AVAILABLE", "CAPCHA_NOT_READY"]:
+                    continue
+                elif captcha_info.startswith("OK"):
+                    captcha_id = captcha_info.split('|')[1]
 
             while True:
                 await asyncio.sleep(5)
@@ -73,10 +93,10 @@ async def captchaSolver(method):
                         res_response.raise_for_status()
                         response_text = await res_response.text()
 
-                    if response_text in ["ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE", "ERROR_NO_SLOT_AVAILABLE",
+                    if response_text in ["ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE",
                                   "ERROR_CAPTCHA_UNSOLVABLE", "ERROR_WRONG_SAITKEY", "ERROR_WRONG_CAPTCHA_ID"]:
                         raise ValueError(f"Getting result: {response_text}")
-                    elif response_text == "CAPCHA_NOT_READY":
+                    elif response_text in ["ERROR_NO_SLOT_AVAILABLE", "CAPCHA_NOT_READY"]:
                         continue
                     elif response_text.startswith("OK"):
                         return response_text.split("|")[1]
@@ -88,6 +108,11 @@ async def work(account):
     async with aiohttp.ClientSession() as session:
 
         claim_count = 1
+
+        last_proxy_log_time = None
+
+        last_withdraw_time = None
+        last_withdraw_log_time = None
 
         name = account['name']
         proxy = account['proxy']
@@ -171,6 +196,14 @@ async def work(account):
                 except Exception as e:
                     current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                     print(f"{current_time}: {name}: Ошибка во время клейма: {e}")
+
+                    if response.status == 403:
+                        current_time_raw = datetime.now(almaty_tz)
+                        if last_proxy_log_time is None or (
+                                current_time_raw - last_proxy_log_time).total_seconds() > 3600:
+                            log_msg = f"Account: {name}. Proxy problem! proxy: {proxy_url}"
+                            await send_telegram_message(TELEGRAM_BOT_TOKEN, USER_ID, log_msg)
+                            last_proxy_log_time = current_time_raw
                 else:
                     soup = BeautifulSoup(text, 'html.parser')
                     balance_info_container = soup.find('div', class_='balance-info')
@@ -190,11 +223,21 @@ async def work(account):
                     balance_hpe_float = float(balance_hpe.split(' ')[0])
                     rate_hpe_float_day = float(rate_hpe_day.split(' ')[0])
 
+                    current_time_raw = datetime.now(almaty_tz)
                     if balance_hpe_float >= rate_hpe_float_day/4:
-                        # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
-                        # print(f"{current_time}: {name}: Вывожу HPE: {balance_hpe_float}")
-
                         try:
+                            # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                            # print(f"{current_time}: {name}: Вывожу HPE: {balance_hpe_float}")
+
+                            if last_withdraw_time is not None and (
+                                    current_time_raw - last_withdraw_time).total_seconds() <= 600:
+                                if last_withdraw_log_time is None or (
+                                        current_time_raw - last_withdraw_log_time).total_seconds() > 3600:
+                                    log_msg = f"Account: {name}. Withdraw problem! Balance: {balance_usd}"
+                                    await send_telegram_message(TELEGRAM_BOT_TOKEN, USER_ID, log_msg)
+                                    last_withdraw_log_time = current_time_raw
+                                raise ValueError("Уже выводил этот час")
+
                             url = 'https://evergem.io/withdraw'
                             params = {
                                 'redirect_to': '/game'
@@ -249,8 +292,10 @@ async def work(account):
                             current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                             print(f"{current_time}: {name}: Ошибка во время вывода токенов: {e}")
                         else:
-                            current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
+                            current_time_raw = datetime.now(almaty_tz)
+                            current_time = current_time_raw.strftime("%Y-%m-%d %H:%M:%S")
                             print(f"{current_time}: {name}: Удачный вывод: {balance_hpe_float} HPE")
+                            last_withdraw_time = current_time_raw
 
             # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
             # print(f"{current_time}: {name} засыпает")
