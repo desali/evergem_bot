@@ -3,8 +3,9 @@ import os
 
 import pytz
 import aiohttp
-import random
 import concurrent.futures
+
+from capmonstercloudclient.requests import HcaptchaProxylessRequest
 from dotenv import load_dotenv
 
 
@@ -14,21 +15,28 @@ from twocaptcha import TwoCaptcha
 
 from bs4 import BeautifulSoup
 
+from capmonstercloudclient import CapMonsterClient, ClientOptions
+
 # Load env variables
 load_dotenv()
 number_of_accounts = int(os.getenv('ACCOUNTS_COUNT'))
 USER_ID = os.getenv('USER_ID')
+CAPMONSTER_KEY = os.getenv('CAPMONSTER_KEY')
 
 almaty_tz = pytz.timezone('Asia/Almaty')
 
 TWOCAPTHCA = "twocaptcha"
 REHALKA = "rehalka"
+CAPMONSTER = "capmonster"
 
 REHALKA_IP = "188.124.36.201:3005"
 CAPTCHA_URL = "https://evergem.io/claim?redirect_to=/game"
 CAPTCHA_KEY = "d1add268-b915-46c1-afd3-960faba20822"
 
 TELEGRAM_BOT_TOKEN = "6933846503:AAEL6QXu_4a9yEyiX-yZua2MyeEMyHAn0IA"
+
+client_options = ClientOptions(api_key=CAPMONSTER_KEY)
+cap_monster_client = CapMonsterClient(options=client_options)
 
 workbook = load_workbook(filename='info.xlsx')
 sheet = workbook.active
@@ -56,19 +64,25 @@ async def send_telegram_message(bot_token, chat_id, text):
             response.raise_for_status()
 
 
-async def captchaSolver(method, key):
+async def captchaSolver(method, rehalka_key):
     if method == TWOCAPTHCA:
         loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             two_result = await loop.run_in_executor(pool, lambda: TwoCaptcha("5bcf672e872e4ed67e1b0a1627eece17",
                                                                          defaultTimeout=180).hcaptcha(
-                sitekey='d1add268-b915-46c1-afd3-960faba20822',
-                url='https://evergem.io/claim?redirect_to=/game',
+                sitekey=CAPTCHA_URL,
+                url=CAPTCHA_KEY,
             ))
             return two_result.get('code').replace(" ", "")
+    elif method == CAPMONSTER:
+        recaptcha2request = HcaptchaProxylessRequest(
+            websiteUrl=CAPTCHA_URL,
+            websiteKey=CAPTCHA_KEY)
+        cap_result = await cap_monster_client.solve_captcha(recaptcha2request)
+        return cap_result['gRecaptchaResponse']
     elif method == REHALKA:
         async with aiohttp.ClientSession() as rh_session:
-            url = f"http://{REHALKA_IP}/in.php?userkey={key}&host={CAPTCHA_URL}&sitekey={CAPTCHA_KEY}"
+            url = f"http://{REHALKA_IP}/in.php?userkey={rehalka_key}&host={CAPTCHA_URL}&sitekey={CAPTCHA_KEY}"
             captcha_id = None
             while captcha_id is None:
                 await asyncio.sleep(1)
@@ -88,7 +102,7 @@ async def captchaSolver(method, key):
                 await asyncio.sleep(5)
 
                 async with aiohttp.ClientSession() as rh_res_session:
-                    url = f"http://{REHALKA_IP}/res.php?userkey={key}&id={captcha_id}"
+                    url = f"http://{REHALKA_IP}/res.php?userkey={rehalka_key}&id={captcha_id}"
                     async with rh_res_session.get(url) as res_response:
                         res_response.raise_for_status()
                         response_text = await res_response.text()
@@ -120,7 +134,7 @@ async def work(account):
         item_id = account['item_id']
         token = account['token']
         cookie = account['cookie']
-        key = account['rehalka_key']
+        rehalka_key = account['rehalka_key']
         # print(f"{name} данные загружены")
 
         while True:
@@ -128,7 +142,7 @@ async def work(account):
             try:
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} начинаю решать капчу")
-                gh = await captchaSolver(REHALKA, key)
+                gh = await captchaSolver(CAPMONSTER, "")
 
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} решил капчу")
