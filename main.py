@@ -5,7 +5,7 @@ import pytz
 import aiohttp
 import concurrent.futures
 
-from capmonstercloudclient.requests import HcaptchaProxylessRequest
+from capmonstercloudclient.requests import HcaptchaProxylessRequest, HcaptchaRequest
 from dotenv import load_dotenv
 
 from datetime import datetime
@@ -75,7 +75,7 @@ async def send_telegram_message(bot_token, chat_id, text):
             response.raise_for_status()
 
 
-async def captchaSolver(method, rehalka_key):
+async def captchaSolver(method, proxy, rehalka_key):
     if method == TWOCAPTHCA:
         loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -85,10 +85,27 @@ async def captchaSolver(method, rehalka_key):
             ))
             return two_result.get('code').replace(" ", "")
     elif method == CAPMONSTER:
-        recaptcha2request = HcaptchaProxylessRequest(
-            websiteUrl=CAPTCHA_URL,
-            websiteKey=CAPTCHA_KEY)
-        cap_result = await cap_monster_client.solve_captcha(recaptcha2request)
+        if proxy != 'no':
+            proxy_creds = proxy.split(':')
+            proxy_ip = proxy_creds[0]
+            proxy_port = proxy_creds[1]
+            proxy_user = proxy_creds[2]
+            proxy_pass = proxy_creds[3]
+            hcaptchaRequest = HcaptchaRequest(
+                websiteUrl=CAPTCHA_URL,
+                websiteKey=CAPTCHA_KEY,
+                proxyType='http',
+                proxyAddress=proxy_ip,
+                proxyPort=proxy_port,
+                proxyLogin=proxy_user,
+                proxyPassword=proxy_pass,
+            )
+        else:
+            hcaptchaRequest = HcaptchaProxylessRequest(
+                websiteUrl=CAPTCHA_URL,
+                websiteKey=CAPTCHA_KEY,
+            )
+        cap_result = await cap_monster_client.solve_captcha(hcaptchaRequest)
         return cap_result['gRecaptchaResponse']
     elif method == CAPSOLVER:
         capsolver_result = await HCaptcha(api_key=CAPSOLVER_KEY,
@@ -162,7 +179,7 @@ async def work(account):
             try:
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} начинаю решать капчу")
-                gh = await captchaSolver(method=CAPTCHA_SERVICE, rehalka_key=rehalka_key)
+                gh = await captchaSolver(method=CAPTCHA_SERVICE, proxy=proxy, rehalka_key=rehalka_key)
 
                 # current_time = datetime.now(almaty_tz).strftime("%Y-%m-%d %H:%M:%S")
                 # print(f"{current_time}: {name} решил капчу")
